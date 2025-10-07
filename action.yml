@@ -1,0 +1,177 @@
+name: 'Pipedream Upload Dataset'
+description: 'Upload datasets for ML training on Pipedream'
+author: 'Pipedream'
+
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+
+inputs:
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # REQUIRED INPUTS
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  api-key:
+    description: 'Pipedream API key (get from https://pipedream.in/api-keys)'
+    required: true
+
+  path:
+    description: |
+      Path to dataset file or directory.
+      Supported formats: .csv, .parquet, .json, directories (auto-creates tar.gz)
+    required: true
+
+  name:
+    description: 'Dataset name (e.g., "train-data", "cifar10")'
+    required: true
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # OPTIONAL INPUTS
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  description:
+    description: 'Dataset description'
+    required: false
+
+  exclude-patterns:
+    description: 'Comma-separated glob patterns to exclude (e.g., "*.DS_Store,*.tmp,raw")'
+    required: false
+    default: '*.DS_Store,*.pyc,__pycache__,.git,.venv,node_modules'
+
+  wait-for-upload:
+    description: 'Wait for upload to complete (true/false)'
+    required: false
+    default: 'true'
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # ADVANCED OPTIONS
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  api-url:
+    description: 'Orchestrator API URL'
+    required: false
+    default: 'https://ml-orchestrator.pipedream.in'
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# OUTPUTS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+outputs:
+  dataset-id:
+    description: 'Uploaded dataset ID'
+    value: ${{ steps.upload.outputs.dataset_id }}
+
+  dataset-name:
+    description: 'Dataset name'
+    value: ${{ steps.upload.outputs.dataset_name }}
+
+  size-bytes:
+    description: 'Dataset size in bytes'
+    value: ${{ steps.upload.outputs.size_bytes }}
+
+  upload-url:
+    description: 'S3 URL where dataset was uploaded'
+    value: ${{ steps.upload.outputs.upload_url }}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# IMPLEMENTATION (Composite Action)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+runs:
+  using: 'composite'
+  steps:
+    # ━━━ Step 1: Install pdtrain CLI ━━━
+    - name: Install pdtrain CLI
+      shell: bash
+      run: |
+        echo "::group::Installing pdtrain"
+        pip install -q pdtrain
+        echo "::endgroup::"
+
+    # ━━━ Step 2: Configure pdtrain ━━━
+    - name: Configure pdtrain
+      shell: bash
+      env:
+        PDTRAIN_API_URL: ${{ inputs.api-url }}
+        PDTRAIN_API_KEY: ${{ inputs.api-key }}
+      run: |
+        echo "::group::Configuring pdtrain"
+        pdtrain configure --api-url "$PDTRAIN_API_URL" --api-key "$PDTRAIN_API_KEY"
+        echo "✓ pdtrain configured"
+        echo "::endgroup::"
+
+    # ━━━ Step 3: Validate inputs ━━━
+    - name: Validate inputs
+      shell: bash
+      env:
+        DATASET_PATH: ${{ inputs.path }}
+      run: |
+        echo "::group::Validating inputs"
+
+        if [ ! -e "$DATASET_PATH" ]; then
+          echo "::error::Dataset path does not exist: $DATASET_PATH"
+          exit 1
+        fi
+
+        echo "✓ Dataset path exists: $DATASET_PATH"
+        echo "::endgroup::"
+
+    # ━━━ Step 4: Upload dataset ━━━
+    - name: Upload dataset
+      id: upload
+      shell: bash
+      env:
+        DATASET_PATH: ${{ inputs.path }}
+        DATASET_NAME: ${{ inputs.name }}
+        DESCRIPTION: ${{ inputs.description }}
+        EXCLUDE: ${{ inputs.exclude-patterns }}
+        WAIT: ${{ inputs.wait-for-upload }}
+      run: |
+        echo "::group::Uploading dataset"
+
+        # Build command
+        CMD="pdtrain dataset upload \"$DATASET_PATH\" --name \"$DATASET_NAME\""
+
+        # Add description if provided
+        if [ -n "$DESCRIPTION" ]; then
+          CMD="$CMD --description \"$DESCRIPTION\""
+        fi
+
+        # Add exclude patterns
+        if [ -n "$EXCLUDE" ]; then
+          IFS=',' read -ra PATTERNS <<< "$EXCLUDE"
+          for pattern in "${PATTERNS[@]}"; do
+            pattern=$(echo "$pattern" | xargs)  # trim whitespace
+            CMD="$CMD --exclude \"$pattern\""
+          done
+        fi
+
+        # Add wait flag
+        if [ "$WAIT" = "true" ]; then
+          CMD="$CMD --wait"
+        fi
+
+        # Add JSON output
+        CMD="$CMD --json"
+
+        # Execute upload
+        echo "Command: $CMD"
+        eval "$CMD" > /tmp/dataset-output.json
+
+        # Extract outputs
+        DATASET_ID=$(cat /tmp/dataset-output.json | jq -r '.dataset_id')
+        DATASET_NAME_OUT=$(cat /tmp/dataset-output.json | jq -r '.name // ""')
+        SIZE_BYTES=$(cat /tmp/dataset-output.json | jq -r '.size_bytes // 0')
+        UPLOAD_URL=$(cat /tmp/dataset-output.json | jq -r '.upload_url // ""')
+
+        # Set outputs
+        echo "dataset_id=$DATASET_ID" >> $GITHUB_OUTPUT
+        echo "dataset_name=$DATASET_NAME_OUT" >> $GITHUB_OUTPUT
+        echo "size_bytes=$SIZE_BYTES" >> $GITHUB_OUTPUT
+        echo "upload_url=$UPLOAD_URL" >> $GITHUB_OUTPUT
+
+        echo "::notice::Dataset uploaded successfully - ID: $DATASET_ID"
+        echo "✓ Dataset ID: $DATASET_ID"
+        echo "✓ Size: $(numfmt --to=iec-i --suffix=B $SIZE_BYTES 2>/dev/null || echo \"$SIZE_BYTES bytes\")"
+
+        echo "::endgroup::"
