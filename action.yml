@@ -142,18 +142,20 @@ runs:
           CMD="$CMD --wait"
         fi
 
-        # Add JSON output
-        CMD="$CMD --json"
-
         # Execute upload
         echo "Command: $CMD"
-        eval "$CMD" > /tmp/dataset-output.json
+        OUTPUT=$(eval "$CMD" 2>&1)
+        echo "$OUTPUT"
 
-        # Extract outputs
-        DATASET_ID=$(cat /tmp/dataset-output.json | jq -r '.dataset_id')
-        DATASET_NAME_OUT=$(cat /tmp/dataset-output.json | jq -r '.name // ""')
-        SIZE_BYTES=$(cat /tmp/dataset-output.json | jq -r '.size_bytes // 0')
-        UPLOAD_URL=$(cat /tmp/dataset-output.json | jq -r '.upload_url // ""')
+        # Extract dataset ID from output (format: "Dataset ID: <uuid>")
+        DATASET_ID=$(echo "$OUTPUT" | sed -n 's/^Dataset ID: \([a-f0-9-]*\)$/\1/p' || echo "")
+        if [ -z "$DATASET_ID" ]; then
+          # Fallback: try to find any UUID pattern
+          DATASET_ID=$(echo "$OUTPUT" | grep -Eo '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1 || echo "unknown")
+        fi
+        DATASET_NAME_OUT="$DATASET_NAME"
+        SIZE_BYTES="0"
+        UPLOAD_URL=""
 
         # Set outputs
         echo "dataset_id=$DATASET_ID" >> $GITHUB_OUTPUT
