@@ -88,19 +88,8 @@ runs:
         pip install -q pdtrain
         echo "::endgroup::"
 
-    # ━━━ Step 2: Configure pdtrain ━━━
-    - name: Configure pdtrain
-      shell: bash
-      env:
-        PDTRAIN_API_URL: ${{ inputs.api-url }}
-        PDTRAIN_API_KEY: ${{ inputs.api-key }}
-      run: |
-        echo "::group::Configuring pdtrain"
-        pdtrain configure --api-url "$PDTRAIN_API_URL" --api-key "$PDTRAIN_API_KEY"
-        echo "✓ pdtrain configured"
-        echo "::endgroup::"
 
-    # ━━━ Step 3: Validate inputs ━━━
+    # ━━━ Step 2: Validate inputs ━━━
     - name: Validate inputs
       shell: bash
       env:
@@ -116,11 +105,13 @@ runs:
         echo "✓ Dataset path exists: $DATASET_PATH"
         echo "::endgroup::"
 
-    # ━━━ Step 4: Upload dataset ━━━
+    # ━━━ Step 3: Upload dataset ━━━
     - name: Upload dataset
       id: upload
       shell: bash
       env:
+        PDTRAIN_API_URL: ${{ inputs.api-url }}
+        PDTRAIN_API_KEY: ${{ inputs.api-key }}
         DATASET_PATH: ${{ inputs.path }}
         DATASET_NAME: ${{ inputs.name }}
         DESCRIPTION: ${{ inputs.description }}
